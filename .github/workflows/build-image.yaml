@@ -1,5 +1,8 @@
 name: build-image
 run-name: Build the shimboot disk image for all boards
+on:
+  push:
+  workflow_dispatch:
 
 jobs:
   build:
