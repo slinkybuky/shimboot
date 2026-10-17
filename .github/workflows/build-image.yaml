@@ -1,5 +1,7 @@
+
 name: build-image
 run-name: Build the shimboot disk image for all boards
+
 on:
   push:
   workflow_dispatch:
@@ -9,35 +11,36 @@ jobs:
     permissions:
       contents: write
 
-    strategy: 
+    strategy:
       matrix:
         board: [dedede, octopus, coral, grunt, nissa, zork]
 
     runs-on: ubuntu-latest
+
     steps:
       - name: Maximize build space
-        uses: easimon/maximize-build-space@master
+        uses: AdityaGarg8/remove-unwanted-software@v5
         with:
-          root-reserve-mb: 8192
-          swap-size-mb: 1024
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
 
-      - name: download repo
+      - name: Download repo
         uses: actions/checkout@v4
-      
-      - name: run build
+
+      - name: Run build
         run: sudo DEBUG=1 ./build_complete.sh ${{ matrix.board }} compress_img=1 quiet=1 desktop=kde
 
-      - name: upload img
+      - name: Upload image
         uses: actions/upload-artifact@v4
         with:
           name: shimboot_${{ matrix.board }}
           path: data/shimboot_${{ matrix.board }}.bin
           compression-level: 7
-  
-      - name: create release
+
+      - name: Create release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
