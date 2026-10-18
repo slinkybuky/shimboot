@@ -47,7 +47,7 @@ trap sigint_handler SIGINT
 
 base_dir="$(realpath -m  $(dirname "$0"))"
 board="$1"
-shim_url="https://dl.darkn.bio/api/raw/?path=/SH1mmer/$board.zip"
+shim_url="https://dl.cros.download/files/$board/$board.zip"
 boards_url="https://chromiumdash.appspot.com/cros/fetch_serving_builds?deviceCategory=ChromeOS"
 
 if [ -z "$data_dir" ]; then
