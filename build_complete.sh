@@ -5,15 +5,15 @@
 . ./image_utils.sh
 
 print_help() {
-  echo "Usage: ./build_complete.sh board_name"
-  echo "Valid named arguments (specify with 'key=value'):"
-  echo "  compress_img - Compress the final disk image into a zip file. Set this to any value to enable this option."
-  echo "  rootfs_dir   - Use a different rootfs for the build. The directory you select will be copied before any patches are applied."
-  echo "  quiet        - Don't use progress indicators which may clog up log files."
-  echo "  desktop      - The desktop environment to install. This defaults to 'xfce'. Valid options include:"
-  echo "                   gnome, xfce, kde, lxde, gnome-flashback, cinnamon, mate, lxqt"
-  echo "  data_dir     - The working directory for the scripts. This defaults to ./data"
-  echo "  arch         - The CPU architecture to build the shimboot image for. Set this to 'arm64' if you have an ARM Chromebook."
+  echo "Usage: ./build_complete.sh board_name [key=value ...]"
+  echo "Options:"
+  echo "  compress_img=1             Compress the final disk image into a ZIP."
+  echo "  rootfs_dir=PATH            Use an existing root filesystem."
+  echo "  quiet=1                    Disable progress indicators."
+  echo "  desktop=NAME               Desktop environment (default: xfce)."
+  echo "  display_manager=NAME       Display manager (default: auto)."
+  echo "  data_dir=PATH              Working directory (default: ./data)."
+  echo "  arch=amd64|arm64           Target architecture (default: amd64)."
 }
 
 assert_root
@@ -24,18 +24,51 @@ compress_img="${args['compress_img']}"
 rootfs_dir="${args['rootfs_dir']}"
 quiet="${args['quiet']}"
 desktop="${args['desktop']:-xfce}"
+display_manager="${args['display_manager']:-auto}"
 data_dir="${args['data_dir']}"
 arch="${args['arch']:-amd64}"
 
-# Remove accidental quote characters passed literally by workflow inputs.
 arch="${arch//\'/}"
 arch="${arch//\"/}"
 
 case "$arch" in
-  amd64|arm64)
-    ;;
+  amd64|arm64) ;;
   *)
     echo "ERROR: unsupported architecture '$arch'. Use amd64 or arm64."
+    exit 1
+    ;;
+esac
+
+case "$desktop" in
+  gnome|xfce|kde|lxde|gnome-flashback|cinnamon|mate|lxqt) ;;
+  *)
+    echo "ERROR: unsupported desktop '$desktop'."
+    exit 1
+    ;;
+esac
+
+case "$display_manager" in
+  auto)
+    display_manager_package=""
+    ;;
+  lightdm)
+    display_manager_package="lightdm"
+    ;;
+  sddm)
+    display_manager_package="sddm"
+    ;;
+  gdm3)
+    display_manager_package="gdm3"
+    ;;
+  lxdm)
+    display_manager_package="lxdm"
+    ;;
+  slim)
+    display_manager_package="slim"
+    ;;
+  *)
+    echo "ERROR: unsupported display manager '$display_manager'."
+    echo "Valid options: auto, lightdm, sddm, gdm3, lxdm, slim."
     exit 1
     ;;
 esac
@@ -200,17 +233,45 @@ if [ -z "$rootfs_dir" ]; then
   rm -rf -- "$rootfs_dir"
   mkdir -p "$rootfs_dir"
 
-  echo "building debian rootfs"
+  echo "building Debian rootfs"
+  echo "desktop: $desktop"
+  echo "display manager: $display_manager"
 
-  ./build_rootfs.sh "$rootfs_dir" bookworm \
-    "custom_packages=$desktop_package" \
-    "hostname=shimboot-$board" \
-    "username=user" \
-    "user_passwd=user" \
-    "arch=$arch" || exit 1
+  if [ -n "$display_manager_package" ]; then
+    ./build_rootfs.sh "$rootfs_dir" bookworm \
+      "custom_packages=$desktop_package $display_manager_package" \
+      "hostname=shimboot-$board" \
+      "username=user" \
+      "user_passwd=user" \
+      "arch=$arch" || exit 1
+
+    echo "configuring display manager: $display_manager_package"
+
+    if [ -x "$rootfs_dir/usr/bin/debconf-set-selections" ] ||
+       [ -x "$rootfs_dir/usr/sbin/debconf-set-selections" ]; then
+      printf '%s shared/default-x-display-manager select %s\n' \
+        "$display_manager_package" "$display_manager_package" |
+        chroot "$rootfs_dir" debconf-set-selections
+    else
+      echo "WARNING: debconf-set-selections not found in rootfs."
+    fi
+
+    if ! chroot "$rootfs_dir" dpkg-reconfigure \
+      -f noninteractive "$display_manager_package"; then
+      echo "WARNING: display manager reconfiguration failed."
+      echo "The selected package was installed, but its default selection may need checking."
+    fi
+  else
+    ./build_rootfs.sh "$rootfs_dir" bookworm \
+      "custom_packages=$desktop_package" \
+      "hostname=shimboot-$board" \
+      "username=user" \
+      "user_passwd=user" \
+      "arch=$arch" || exit 1
+  fi
 fi
 
-echo "patching debian rootfs"
+echo "patching Debian rootfs"
 retry_cmd ./patch_rootfs.sh "$shim_bin" "$reco_bin" "$rootfs_dir" "quiet=$quiet" || exit 1
 
 echo "building final disk image"
