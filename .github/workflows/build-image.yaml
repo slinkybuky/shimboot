@@ -1,47 +1,175 @@
+
 name: build-image
-run-name: Build the shimboot disk image for all boards
+run-name: Build Shimboot images
 
 on:
   workflow_dispatch:
+    inputs:
+      dedede:
+        description: "Build dedede"
+        type: boolean
+        required: true
+        default: true
+      octopus:
+        description: "Build octopus"
+        type: boolean
+        required: true
+        default: true
+      coral:
+        description: "Build coral"
+        type: boolean
+        required: true
+        default: true
+      grunt:
+        description: "Build grunt"
+        type: boolean
+        required: true
+        default: true
+      nissa:
+        description: "Build nissa"
+        type: boolean
+        required: true
+        default: true
+      zork:
+        description: "Build zork"
+        type: boolean
+        required: true
+        default: true
+
+      desktop:
+        description: "Desktop environment (e.g. xfce, lxqt, cinnamon)"
+        type: string
+        required: true
+        default: "xfce"
+
+      display_manager:
+        description: "Display manager (e.g. lightdm, sddm, gdm3)"
+        type: string
+        required: true
+        default: "lightdm"
+
+      compress_img:
+        description: "Compress each image into a ZIP"
+        type: boolean
+        required: true
+        default: true
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      boards: ${{ steps.select.outputs.boards }}
+
+    steps:
+      - name: Select boards
+        id: select
+        env:
+          DEDEDE: ${{ inputs.dedede }}
+          OCTOPUS: ${{ inputs.octopus }}
+          CORAL: ${{ inputs.coral }}
+          GRUNT: ${{ inputs.grunt }}
+          NISSA: ${{ inputs.nissa }}
+          ZORK: ${{ inputs.zork }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          boards=()
+
+          [[ "$DEDEDE" == "true" ]] && boards+=(dedede)
+          [[ "$OCTOPUS" == "true" ]] && boards+=(octopus)
+          [[ "$CORAL" == "true" ]] && boards+=(coral)
+          [[ "$GRUNT" == "true" ]] && boards+=(grunt)
+          [[ "$NISSA" == "true" ]] && boards+=(nissa)
+          [[ "$ZORK" == "true" ]] && boards+=(zork)
+
+          if [[ ${#boards[@]} -eq 0 ]]; then
+            echo "Error: select at least one board."
+            exit 1
+          fi
+
+          printf 'boards=[' >> "$GITHUB_OUTPUT"
+          first=true
+
+          for board in "${boards[@]}"; do
+            if [[ "$first" == true ]]; then
+              first=false
+            else
+              printf ',' >> "$GITHUB_OUTPUT"
+            fi
+            printf '"%s"' "$board" >> "$GITHUB_OUTPUT"
+          done
+
+          printf ']\n' >> "$GITHUB_OUTPUT"
+
   build:
-    permissions:
-      contents: write
+    needs: prepare
+    runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        board: [dedede, octopus, coral, grunt, nissa, zork]
-
-    runs-on: ubuntu-latest
+        board: ${{ fromJSON(needs.prepare.outputs.boards) }}
 
     steps:
       - name: Maximize build space
         uses: AdityaGarg8/remove-unwanted-software@v5
         with:
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
 
       - name: Download repo
         uses: actions/checkout@v4
 
-      - name: Run build
-        run: sudo env DEBUG=1 /bin/bash ./build_complete.sh "${{ matrix.board }}" compress_img=1 quiet=1 desktop=lxqt arch=amd64
+      - name: Build image
+        env:
+          BOARD: ${{ matrix.board }}
+          DESKTOP: ${{ inputs.desktop }}
+          DISPLAY_MANAGER: ${{ inputs.display_manager }}
+          COMPRESS_IMG: ${{ inputs.compress_img }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          args=(
+            "$BOARD"
+            "quiet=1"
+            "desktop=$DESKTOP"
+            "display_manager=$DISPLAY_MANAGER"
+            "arch=amd64"
+          )
+
+          if [[ "$COMPRESS_IMG" == "true" ]]; then
+            args+=("compress_img=1")
+          fi
+
+          sudo env DEBUG=1 /bin/bash ./build_complete.sh "${args[@]}"
 
       - name: Upload image
         uses: actions/upload-artifact@v4
         with:
           name: shimboot_${{ matrix.board }}
           path: data/shimboot_${{ matrix.board }}.bin
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload compressed image
+        if: inputs.compress_img
+        uses: actions/upload-artifact@v4
+        with:
+          name: shimboot_${{ matrix.board }}_zip
+          path: data/shimboot_${{ matrix.board }}.zip
+          if-no-files-found: error
           compression-level: 0
 
       - name: Create release
-        uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
         with:
           draft: true
-          files: data/shimboot_${{ matrix.board }}.zip
+          files: |
+            data/shimboot_${{ matrix.board }}.bin
+            data/shimboot_${{ matrix.board }}.zip
